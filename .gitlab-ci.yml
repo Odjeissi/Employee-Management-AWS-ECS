@@ -1,0 +1,127 @@
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+variables:
+  Docker_File_Path: "${CI_PROJECT_DIR}/Docker/Dockerfile"
+  IMAGE_URI: "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO_NAME}:${CI_COMMIT_SHORT_SHA}"
+
+
+stages:
+  - test
+  - build
+  - deploy
+
+
+.requirements:
+  image: python:3.11-alpine
+  before_script:
+    - python -m pip install -r requirements.txt
+
+
+.aws_oidc:
+
+  # Tell GitLab to create an AWS login token for this job.
+  id_tokens:
+    GITLAB_OIDC_TOKEN:
+      # AWS checks this value before allowing access.
+      aud: sts.amazonaws.com
+
+  variables:
+    # IAM Role stored in GitLab CI/CD Variables.
+    AWS_ROLE_ARN: "${ROLE_ARN}"
+
+    # Temporary session name shown in AWS logs.
+    AWS_ROLE_SESSION_NAME: "gitlab-${CI_PROJECT_ID}-${CI_PIPELINE_ID}"
+
+    # File where we save the login token.
+    AWS_WEB_IDENTITY_TOKEN_FILE: "/tmp/gitlab-oidc-token"
+
+  before_script:
+    # Save the GitLab token into a file.
+    # Terraform will use this file to log in to AWS.
+    - printf '%s' "${GITLAB_OIDC_TOKEN}" > "${AWS_WEB_IDENTITY_TOKEN_FILE}"
+
+
+pylint_job:
+  stage: test
+  extends: .requirements
+  script:
+    - echo "Analyzing the source code"
+    - pylint app/ tests/ run.py
+  rules:
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+
+
+pytest_job:
+  stage: test
+  extends: .requirements
+  script:
+    - echo "Running unit tests"
+    - python -m pytest -v
+  rules:
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+
+
+build_docker:
+  image: docker:29.6.2
+  services:
+    - docker:29.6.2-dind
+  stage: build
+  extends: .aws_oidc
+  before_script:
+    - !reference [.aws_oidc, before_script]
+    - apk add --no-cache aws-cli
+    - aws --version
+    - docker --version
+    - aws ecr get-login-password --region "${REGION}" | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+  script:
+    - docker build -t "${IMAGE_URI}" -f "${Docker_File_Path}" .
+    - docker push "${IMAGE_URI}"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+
+deploy_job:
+  stage: deploy
+  image:
+    name: amazon/aws-cli:2.34.24
+    entrypoint: [""]
+  extends: .aws_oidc
+  before_script:
+    - !reference [.aws_oidc, before_script]
+    - aws --version
+    - yum install -y jq
+  script:
+    - |
+      aws ecs describe-task-definition \
+        --task-definition "${TASk_DEFINITION_NAME}" \
+        --region "${REGION}" \
+        --output json > current_task_definition.json
+
+    - |
+      jq --arg IMAGE "${IMAGE_URI}" \
+        '.taskDefinition | .containerDefinitions[0].image = $IMAGE
+        | del(.taskDefinitionArn,
+        .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+        current_task_definition.json > new_task_definition.json
+
+    - |
+      TASK_DEFINITION_ARN=$(aws ecs register-task-definition \
+        --cli-input-json file://new_task_definition.json \
+        --region "${REGION}" \
+        --query taskDefinition.taskDefinitionArn \
+        --output text)
+
+    - echo "${TASK_DEFINITION_ARN}"
+
+    - |
+      aws ecs update-service \
+        --cluster "${CLUSTER_NAME}" \
+        --service "${SERVICE_NAME}" \
+        --region "${REGION}" \
+        --task-definition "${TASK_DEFINITION_ARN}"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

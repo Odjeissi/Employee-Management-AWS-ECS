@@ -1,0 +1,18 @@
+{% extends "base.html" %} {% block content %}
+<div class="p-5 bg-light rounded">
+  <h1>Cloud Employee</h1>
+  <p class="lead">
+    A simple Flask web application built for DevOps, cloud, Docker, GitLab
+    CI/CD, AWS, and Kubernetes practice.
+  </p>
+
+  <p>
+    Current employees in directory:
+    <strong>{{ employee_count }}</strong>
+  </p>
+
+  <a href="{{ url_for('main.employees') }}" class="btn btn-primary"
+    >View Employees</a
+  >
+</div>
+{% endblock %}
