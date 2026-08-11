@@ -42,6 +42,16 @@ GitLab CI/CD
 
 GitLab connects to AWS with OIDC, so I do not need to store permanent AWS access keys in GitLab.
 
+## Infrastructure
+
+The AWS infrastructure for this app was created in a separate Terraform project.
+
+Infrastructure repository:
+
+[aws-3tier-terraform](https://github.com/Odjeissi/aws-3tier-terraform)
+
+That project is used to build the AWS environment for this application, including the VPC, networking, ECS resources, RDS PostgreSQL database, IAM roles, Route 53, and other supporting services.
+
 ## Application Features
 
 The app can:
