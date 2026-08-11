@@ -433,7 +433,7 @@ These screenshots show the app, the GitLab pipeline, the AWS deployment, and the
 
 ### Application
 
-#### Home Page
+#### Home Page After MR
 
 ![Application Home Page](docs/screenshots/01-home-page.png)
 
